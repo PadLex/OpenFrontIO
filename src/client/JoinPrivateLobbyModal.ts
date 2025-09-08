@@ -5,6 +5,7 @@ import { GameInfo, GameRecord } from "../core/Schemas";
 import { generateID } from "../core/Util";
 import { getServerConfigFromClient } from "../core/configuration/ConfigLoader";
 import { JoinLobbyEvent } from "./Main";
+import { sendToPyBot, subscribeToPyBot } from "./PythonInterface";
 import "./components/baseComponents/Button";
 import "./components/baseComponents/Modal";
 @customElement("join-private-lobby-modal")
@@ -23,6 +24,16 @@ export class JoinPrivateLobbyModal extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleKeyDown);
+
+    subscribeToPyBot((data) => {
+      if (data.intent === "joinLobby") {
+        this.open();
+        console.log("Received joinLobby command from Python:", data);
+        this.setLobbyId(data.lobbyId);
+        this.joinLobby();
+        sendToPyBot({ cid: data.cid });
+      }
+    });
   }
 
   disconnectedCallback() {

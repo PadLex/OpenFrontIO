@@ -43,9 +43,6 @@ import "./components/baseComponents/Modal";
 import { discordLogin, getUserMe, isLoggedIn } from "./jwt";
 import "./styles.css";
 
-/* PyBot interface */
-import { sendToPyBot, subscribeToPyBot } from "./PythonInterface";
-
 declare global {
   interface Window {
     PageOS: {
@@ -350,15 +347,6 @@ class Client {
       if (this.usernameInput?.isValid()) {
         hostModal.open();
         this.publicLobby.leaveLobby();
-      }
-    });
-
-    subscribeToPyBot((data) => {
-      console.log("Checking for create-lobby event from PyBot data...", data);
-      if (data.intent === "createLobby") {
-        hostModal.open();
-        // @ts-expect-error -- minimizing refactor
-        sendToPyBot({ cid: data.cid, lobbyId: hostModal.lobbyId });
       }
     });
 

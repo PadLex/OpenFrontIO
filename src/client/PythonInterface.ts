@@ -1,4 +1,5 @@
 // PythonInterface.ts
+
 import { getPersistentID } from "./Main";
 
 const URL = "wss://localhost:8765";
@@ -7,11 +8,6 @@ const PING_INTERVAL_MS = 10_000;
 
 let ws: WebSocket | null = null;
 let connectPromise: Promise<WebSocket> | null = null;
-
-const clientId = getPersistentID();
-
-// @ts-expect-error for debugging
-window.clientId = clientId;
 
 /**
  * Establishes a WS connection and resolves only after the Python side
@@ -29,7 +25,7 @@ function initSocket(): Promise<WebSocket> {
       socket.send(
         JSON.stringify({
           intent: "handshake",
-          clientId: clientId,
+          clientId: getPersistentID(),
         }),
       );
 
@@ -38,9 +34,10 @@ function initSocket(): Promise<WebSocket> {
     };
 
     socket.addEventListener("open", onOpen);
-    socket.addEventListener("error", (err) =>
-      console.error("WebSocket error:", err),
-    );
+    socket.addEventListener("error", (err) => {
+      console.error("WebSocket error:", err);
+      reject(err);
+    });
   });
 
   return connectPromise;
@@ -56,6 +53,7 @@ export async function sendToPyBot(data: any): Promise<void> {
 export async function subscribeToPyBot(
   callback: (data: any) => void,
 ): Promise<void> {
+  console.log("Subscribing to Python messages");
   const socket = await initSocket();
   socket.addEventListener("message", (e: MessageEvent) => {
     try {

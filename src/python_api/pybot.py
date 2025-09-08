@@ -8,7 +8,7 @@ from playwright.async_api import async_playwright
 
 CLIENT_URL = "http://localhost:9000"
 TOKEN = "Pybot"
-TIMEOUT = 5
+TIMEOUT = 60
 
 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_ctx.load_cert_chain("localhost.pem", "localhost-key.pem")
@@ -29,6 +29,7 @@ class Client:
 
                 if "cid" in data:
                     self.pending[data["cid"]].set_result(data)
+                    del self.pending[data["cid"]]
                     continue
 
                 intent = data.get("intent")
@@ -48,26 +49,22 @@ class Client:
     async def on_turn(self, data):
         print("Turn from", data)
 
-    async def send(self, data, attempts=1):
+    async def send(self, data):
         # TODO: how do I wait in case connected is False?
-        response = {}
-        for i in range(attempts):
-            fut = asyncio.get_event_loop().create_future()
-            cid = str(id(fut))
-            self.pending[cid] = fut
-            await self.ws.send(json.dumps({**data, "cid": cid}))
-            try:
-                response = await asyncio.wait_for(fut, timeout=TIMEOUT)
-            except asyncio.TimeoutError:
-                print(f"{i}/{attempts}: Timeout waiting for response to", data)
-            del self.pending[cid]
-        return response
-
+        fut = asyncio.get_event_loop().create_future()
+        cid = str(id(fut))
+        self.pending[cid] = fut
+        await self.ws.send(json.dumps({**data, "cid": cid}))
+        return await asyncio.wait_for(fut, timeout=TIMEOUT)
 
     async def createLobby(self):
         print("Creating lobby")
-        response = await self.send({"intent": "createLobby"}, 3)
-        return response.get("lobbyId", None)
+        response = await self.send({"intent": "createLobby"})
+        return response["lobbyId"]
+
+    async def joinLobby(self, lobbyId):
+        print("Joining lobby", lobbyId)
+        assert await self.send({"intent": "joinLobby", "lobbyId": lobbyId})
 
 
 
@@ -117,6 +114,8 @@ class Orchestrator:
         page = await browser.new_page()
 
         await page.goto(CLIENT_URL)
+
+        print("Waiting for client to connect...")
         client = await self.unassigned.get()
 
         return client
@@ -131,15 +130,18 @@ async def main():
 
     # Example usage:
     print("Server started on wss://localhost:8765")
-    client1 = await asyncio.create_task(o.spawn_client())
+    client1 = await asyncio.create_task(o.spawn_client(headless=False))
     print("Spawned client:", client1.id)
 
     client2 = await asyncio.create_task(o.spawn_client(headless=False))
     print("Spawned client:", client2.id)
 
 
-    lobby_id = await client2.createLobby()
+    lobby_id = await client1.createLobby()
     print("Created lobby:", lobby_id)
+
+    await client2.joinLobby(lobby_id)
+    print("Client 2 joined lobby")
 
     await server.wait_closed()
 

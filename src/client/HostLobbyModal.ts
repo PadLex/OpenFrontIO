@@ -27,6 +27,8 @@ import "./components/Maps";
 import { JoinLobbyEvent } from "./Main";
 import { renderUnitTypeOptions } from "./utilities/RenderUnitTypeOptions";
 
+import { sendToPyBot, subscribeToPyBot } from "./PythonInterface";
+
 @customElement("host-lobby-modal")
 export class HostLobbyModal extends LitElement {
   @query("o-modal") private modalEl!: HTMLElement & {
@@ -60,6 +62,21 @@ export class HostLobbyModal extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleKeyDown);
+
+    subscribeToPyBot((data) => {
+      console.log("Checking for create-lobby event from PyBot data...", data);
+      if (data.intent === "createLobby") {
+        this.open();
+
+        // Polling isn't clean but minimizes refactor
+        const interval = setInterval(() => {
+          if (this.lobbyId) {
+            sendToPyBot({ cid: data.cid, lobbyId: this.lobbyId });
+            clearInterval(interval);
+          }
+        }, 50); // slight delay to ensure lobbyId is set
+      }
+    });
   }
 
   disconnectedCallback() {
