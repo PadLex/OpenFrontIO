@@ -29,9 +29,11 @@ export class JoinPrivateLobbyModal extends LitElement {
       if (data.intent === "joinLobby") {
         this.open();
         console.log("Received joinLobby command from Python:", data);
-        this.setLobbyId(data.lobbyId);
-        this.joinLobby();
-        sendToPyBot({ cid: data.cid });
+        // this.setLobbyId(data.lobbyId);
+        // this.joinLobby();
+        this.checkActiveLobby(data.lobbyId).then((s) => {
+          sendToPyBot({ cid: data.cid, success: s });
+        });
       }
     });
   }

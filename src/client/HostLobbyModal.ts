@@ -64,7 +64,6 @@ export class HostLobbyModal extends LitElement {
     window.addEventListener("keydown", this.handleKeyDown);
 
     subscribeToPyBot((data) => {
-      console.log("Checking for create-lobby event from PyBot data...", data);
       if (data.intent === "createLobby") {
         this.open();
 
@@ -75,6 +74,13 @@ export class HostLobbyModal extends LitElement {
             clearInterval(interval);
           }
         }, 50); // slight delay to ensure lobbyId is set
+      }
+    });
+
+    subscribeToPyBot((data) => {
+      if (data.intent === "startGame") {
+        this.startGame();
+        sendToPyBot({ cid: data.cid });
       }
     });
   }

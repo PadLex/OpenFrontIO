@@ -64,7 +64,10 @@ class Client:
 
     async def joinLobby(self, lobbyId):
         print("Joining lobby", lobbyId)
-        assert await self.send({"intent": "joinLobby", "lobbyId": lobbyId})
+        await self.send({"intent": "joinLobby", "lobbyId": lobbyId})
+
+    async def startGame(self):
+        await self.send({"intent": "startGame"})
 
 
 
@@ -142,6 +145,11 @@ async def main():
 
     await client2.joinLobby(lobby_id)
     print("Client 2 joined lobby")
+
+    # input("Press Enter to start the game...")
+
+    await client1.startGame()
+    print("Game started")
 
     await server.wait_closed()
 
