@@ -43,6 +43,10 @@ import "./components/baseComponents/Modal";
 import { discordLogin, getUserMe, isLoggedIn } from "./jwt";
 import "./styles.css";
 
+import { sendUpdate } from "./PythonInterface";
+
+sendUpdate({ intent: "client_loaded", clientId: getPersistentID() });
+
 declare global {
   interface Window {
     PageOS: {
