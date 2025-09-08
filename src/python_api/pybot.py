@@ -1,10 +1,14 @@
 import asyncio, ssl, json, websockets
+import signal
+import sys
+from typing import Any
 
 from websockets import ServerConnection
+from playwright.async_api import async_playwright
 
 CLIENT_URL = "http://localhost:9000"
 TOKEN = "Pybot"
-HANDSHAKE_TIMEOUT = 5
+TIMEOUT = 5
 
 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_ctx.load_cert_chain("localhost.pem", "localhost-key.pem")
@@ -16,22 +20,26 @@ class Client:
         self.ws = ws
         self.id = client_id
         self.connected = True
+        self.pending: dict[str, asyncio.Future[Any]] = {}
 
     async def listen(self):
         try:
-            async for message in self.ws:            # ordered delivery per connection
+            async for message in self.ws:
                 data = json.loads(message)
+
+                if "cid" in data:
+                    self.pending[data["cid"]].set_result(data)
+                    continue
+
                 intent = data.get("intent")
                 if intent == "ping":
                     await self.on_ping(data)
                 else:
                     print("Unknown intent:", intent)
         except websockets.ConnectionClosed:
-            pass
-        finally:
-            # cleanup
-            self.connected = False
             print("Client disconnected", self.id)
+            self.connected = False
+
 
     async def on_ping(self, data):
         print("Ping from", self.id)
@@ -40,15 +48,34 @@ class Client:
     async def on_turn(self, data):
         print("Turn from", data)
 
-    async def send(self, data):
+    async def send(self, data, attempts=1):
         # TODO: how do I wait in case connected is False?
-        await self.ws.send(json.dumps(data))
+        response = {}
+        for i in range(attempts):
+            fut = asyncio.get_event_loop().create_future()
+            cid = str(id(fut))
+            self.pending[cid] = fut
+            await self.ws.send(json.dumps({**data, "cid": cid}))
+            try:
+                response = await asyncio.wait_for(fut, timeout=TIMEOUT)
+            except asyncio.TimeoutError:
+                print(f"{i}/{attempts}: Timeout waiting for response to", data)
+            del self.pending[cid]
+        return response
+
+
+    async def createLobby(self):
+        print("Creating lobby")
+        response = await self.send({"intent": "createLobby"}, 3)
+        return response.get("lobbyId", None)
+
 
 
 class Orchestrator:
     def __init__(self):
         self.clients = {}
         self.unassigned = asyncio.Queue()
+        self.playwright = None
 
     async def handler(self, ws: ServerConnection):
         if ws.subprotocol != TOKEN:
@@ -57,7 +84,7 @@ class Orchestrator:
 
         # Handshake, expect clientId
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=HANDSHAKE_TIMEOUT)
+            raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)
             data = json.loads(raw)
             assert data["intent"] == "handshake"
             client_id = data["clientId"]
@@ -82,8 +109,16 @@ class Orchestrator:
 
         await self.clients[client_id].listen()  # keeps the connection alive
 
-    async def spawn_client(self):
+    async def spawn_client(self, headless=True):
+        if self.playwright is None:
+            self.playwright = await async_playwright().start()
+
+        browser = await self.playwright.chromium.launch(headless=headless)
+        page = await browser.new_page()
+
+        await page.goto(CLIENT_URL)
         client = await self.unassigned.get()
+
         return client
 
 
@@ -95,13 +130,19 @@ async def main():
     )
 
     # Example usage:
-    client1_task = asyncio.create_task(o.spawn_client())
     print("Server started on wss://localhost:8765")
-    client1 = await client1_task
+    client1 = await asyncio.create_task(o.spawn_client())
     print("Spawned client:", client1.id)
 
+    client2 = await asyncio.create_task(o.spawn_client(headless=False))
+    print("Spawned client:", client2.id)
+
+
+    lobby_id = await client2.createLobby()
+    print("Created lobby:", lobby_id)
 
     await server.wait_closed()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
