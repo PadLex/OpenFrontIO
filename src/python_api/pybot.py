@@ -8,6 +8,7 @@ HANDSHAKE_TIMEOUT = 5
 
 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_ctx.load_cert_chain("localhost.pem", "localhost-key.pem")
+print("WARNING: using self-signed certificate, for development only")
 
 class Client:
     def __init__(self, orchestrator, ws, client_id):
