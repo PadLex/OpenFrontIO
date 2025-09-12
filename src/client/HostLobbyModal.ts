@@ -63,25 +63,21 @@ export class HostLobbyModal extends LitElement {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleKeyDown);
 
-    subscribeToPyBot((data) => {
-      if (data.intent === "createLobby") {
-        this.open();
+    subscribeToPyBot("createLobby", (data) => {
+      this.open();
 
-        // Polling isn't clean but minimizes refactor
-        const interval = setInterval(() => {
-          if (this.lobbyId) {
-            sendToPyBot({ cid: data.cid, lobbyId: this.lobbyId });
-            clearInterval(interval);
-          }
-        }, 50); // slight delay to ensure lobbyId is set
-      }
+      // Polling isn't clean but minimizes refactor
+      const interval = setInterval(() => {
+        if (this.lobbyId) {
+          sendToPyBot({ cid: data.cid, lobbyId: this.lobbyId });
+          clearInterval(interval);
+        }
+      }, 50); // slight delay to ensure lobbyId is set
     });
 
-    subscribeToPyBot((data) => {
-      if (data.intent === "startGame") {
-        this.startGame();
-        sendToPyBot({ cid: data.cid });
-      }
+    subscribeToPyBot("startGame", (data) => {
+      this.startGame();
+      sendToPyBot({ cid: data.cid });
     });
   }
 

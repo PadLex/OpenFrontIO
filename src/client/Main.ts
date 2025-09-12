@@ -24,6 +24,7 @@ import { LanguageModal } from "./LanguageModal";
 import { NewsModal } from "./NewsModal";
 import "./PublicLobby";
 import { PublicLobby } from "./PublicLobby";
+import { initSocket } from "./PythonInterface";
 import { SinglePlayerModal } from "./SinglePlayerModal";
 import { TerritoryPatternsModal } from "./TerritoryPatternsModal";
 import { TokenLoginModal } from "./TokenLoginModal";
@@ -96,6 +97,8 @@ class Client {
   constructor() {}
 
   initialize(): void {
+    initSocket(); // Initialize WebSocket connection to Python backend
+
     const gameVersion = document.getElementById(
       "game-version",
     ) as HTMLDivElement;

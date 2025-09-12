@@ -4,16 +4,18 @@ import { getPersistentID } from "./Main";
 
 const URL = "wss://localhost:8765";
 const TOKEN = "Pybot"; // subprotocol
-const PING_INTERVAL_MS = 10_000;
+const PING_INTERVAL_MS = 60_000;
 
 let ws: WebSocket | null = null;
 let connectPromise: Promise<WebSocket> | null = null;
+const intentListeners: { [key: string]: (data: any) => void } = {};
+const missedMessages: any[] = [];
 
 /**
  * Establishes a WS connection and resolves only after the Python side
  * acknowledges with { intent: "connect", success: true }.
  */
-function initSocket(): Promise<WebSocket> {
+export function initSocket(): Promise<WebSocket> {
   if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve(ws);
   if (connectPromise) return connectPromise;
 
@@ -30,6 +32,7 @@ function initSocket(): Promise<WebSocket> {
       );
 
       ws = socket;
+
       resolve(socket);
     };
 
@@ -37,6 +40,20 @@ function initSocket(): Promise<WebSocket> {
     socket.addEventListener("error", (err) => {
       console.error("WebSocket error:", err);
       reject(err);
+    });
+    socket.addEventListener("message", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse((e.data as any).toString());
+        console.log("Received from Python:", data);
+        if (data.intent in intentListeners) {
+          intentListeners[data.intent](data);
+        } else {
+          console.warn("No listener for intent:", data.intent);
+          missedMessages.push(data);
+        }
+      } catch {
+        console.error("Invalid message from Python:", e.data);
+      }
     });
   });
 
@@ -47,22 +64,26 @@ function initSocket(): Promise<WebSocket> {
 export async function sendToPyBot(data: any): Promise<void> {
   const socket = await initSocket();
   console.log("Sending to Python:", data);
-  socket.send(JSON.stringify(data));
+  socket.send(
+    JSON.stringify(data, (_key, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
+  );
 }
 
 export async function subscribeToPyBot(
+  intent: string,
   callback: (data: any) => void,
 ): Promise<void> {
-  console.log("Subscribing to Python messages");
-  const socket = await initSocket();
-  socket.addEventListener("message", (e: MessageEvent) => {
-    try {
-      const msg = JSON.parse((e.data as any).toString());
-      callback(msg);
-    } catch {
-      console.error("Invalid message from Python:", e.data);
+  console.log("Subscribing to intent:", intent);
+  intentListeners[intent] = callback;
+  // Process any missed messages for this intent
+  for (let i = missedMessages.length - 1; i >= 0; i--) {
+    if (missedMessages[i].intent === intent) {
+      callback(missedMessages[i]);
+      missedMessages.splice(i, 1);
     }
-  });
+  }
 }
 
 /** Keep-alive ping (only sends if/when connected). */
@@ -72,8 +93,3 @@ setInterval(async () => {
     (err) => console.warn("Ping to Python failed:", err),
   );
 }, PING_INTERVAL_MS);
-
-// For debugging log all messages
-subscribeToPyBot((data) => {
-  console.log("python says:", data);
-});

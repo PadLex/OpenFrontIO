@@ -25,16 +25,14 @@ export class JoinPrivateLobbyModal extends LitElement {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleKeyDown);
 
-    subscribeToPyBot((data) => {
-      if (data.intent === "joinLobby") {
-        this.open();
-        console.log("Received joinLobby command from Python:", data);
-        // this.setLobbyId(data.lobbyId);
-        // this.joinLobby();
-        this.checkActiveLobby(data.lobbyId).then((s) => {
-          sendToPyBot({ cid: data.cid, success: s });
-        });
-      }
+    subscribeToPyBot("joinLobby", (data) => {
+      this.open();
+      console.log("Received joinLobby command from Python:", data);
+      // this.setLobbyId(data.lobbyId);
+      // this.joinLobby();
+      this.checkActiveLobby(data.lobbyId).then((s) => {
+        sendToPyBot({ cid: data.cid, success: s });
+      });
     });
   }
 
