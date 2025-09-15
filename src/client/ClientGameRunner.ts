@@ -47,7 +47,7 @@ import {
 import { createCanvas } from "./Utils";
 import { createRenderer, GameRenderer } from "./graphics/GameRenderer";
 
-import { sendToPyBot, subscribeToPyBot } from "./PythonInterface";
+import { subscribeToPyBot } from "./PythonInterface";
 
 export interface LobbyConfig {
   serverConfig: ServerConfig;
@@ -366,88 +366,147 @@ export class ClientGameRunner {
     this.transport.connect(onconnect, onmessage);
 
     /* Send state data to python bot on request */
+    subscribeToPyBot("getStaticState", (data) => {
+      const width = this.gameView.width();
+      const height = this.gameView.height();
+      const skip = data.skip;
 
-    const width = this.gameView.width();
-    const height = this.gameView.height();
-    const skip = 10;
-    console.log(`game dimensions: ${width}x${height}, skip: ${skip}`);
+      const rows = Math.ceil(height / skip);
+      const cols = Math.ceil(width / skip);
 
-    const rows = Math.ceil(height / skip);
-    const cols = Math.ceil(width / skip);
-    console.log(`sampling ${rows * cols} tiles`);
+      // 2D arrays
+      const tileRef: TileRef[][] = Array.from(
+        { length: rows },
+        () => new Array<TileRef>(cols),
+      );
+      const traversalCost: number[][] = Array.from(
+        { length: rows },
+        () => new Array<number>(cols),
+      );
+      const isLand: boolean[][] = Array.from(
+        { length: rows },
+        () => new Array<boolean>(cols),
+      );
+      const isShore: boolean[][] = Array.from(
+        { length: rows },
+        () => new Array<boolean>(cols),
+      );
+      const isBorder: boolean[][] = Array.from(
+        { length: rows },
+        () => new Array<boolean>(cols),
+      );
+      const ownership: number[][] = Array.from(
+        { length: rows },
+        () => new Array<number>(cols),
+      );
 
-    // 2D arrays
-    const tileRef: TileRef[][] = Array.from(
-      { length: rows },
-      () => new Array<TileRef>(cols),
-    );
-    const traversability: number[][] = Array.from(
-      { length: rows },
-      () => new Array<number>(cols),
-    );
-    const isLand: boolean[][] = Array.from(
-      { length: rows },
-      () => new Array<boolean>(cols),
-    );
-    const ownership: number[][] = Array.from(
-      { length: rows },
-      () => new Array<number>(cols),
-    );
-
-    const theme = this.gameView.config().theme();
-
-    // fill static data
-    for (let row = 0, y = 0; y < height; y += skip, row++) {
-      for (let col = 0, x = 0; x < width; x += skip, col++) {
-        const tile = this.gameView.ref(x, y);
-        tileRef[row][col] = tile;
-        traversability[row][col] = theme.terrainColor(
-          this.gameView,
-          tile,
-        ).rgba.g;
-      }
-    }
-
-    subscribeToPyBot("getState", (data) => {
-      console.time("getState execution");
-
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const tile = tileRef[row][col];
+      // fill static data
+      for (let row = 0, y = 0; y < height; y += skip, row++) {
+        for (let col = 0, x = 0; x < width; x += skip, col++) {
+          const tile = this.gameView.ref(x, y);
+          tileRef[row][col] = tile;
           isLand[row][col] = this.gameView.isLand(tile);
-          ownership[row][col] = this.gameView.owner(tile).smallID();
+          isShore[row][col] = this.gameView.isShore(tile);
+          // traversability[row][col] = this.gameView.cost(tile);
         }
       }
 
-      const players: unknown[] = [];
-      for (const player of this.gameView.players()) {
-        players.push({
-          id: player.smallID(),
-          type: { HUMAN: "human", FAKEHUMAN: "nation", BOT: "bot" }[
-            player.type()
-          ],
-          troops: player.troops(),
-          gold: player.gold(),
-          tiles: player.numTilesOwned(),
-          isTraitor: player.isTraitor(),
-        });
-      }
+      const staticState = {
+        game_id: this.lobby.gameStartInfo?.gameID,
 
-      sendToPyBot({
-        cid: data.cid,
-        game_started: this.hasJoined,
-        is_spawn_phase: this.gameView.inSpawnPhase(),
-        my_id: this.gameView.myPlayer()?.smallID() ?? -1,
-        players: players,
-        map: {
-          width: cols,
-          height: rows,
-          skip: skip,
-          traversability,
-          is_land: isLand,
+        // Map data
+        width: cols,
+        height: rows,
+        skip: skip,
+        traversal_cost: traversalCost,
+        is_land: isLand,
+        is_shore: isShore,
+      };
+
+      // Dynamic state updates
+      subscribeToPyBot("getState", (data) => {
+        console.time("getState " + data.cid);
+        const myID =
+          this.gameView.playerByClientID(this.lobby.clientID)?.smallID() ?? -1;
+
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            const tile = tileRef[row][col];
+            traversalCost[row][col] = this.gameView.cost(tile); // ToDo updates with radiation?
+            ownership[row][col] = this.gameView.owner(tile).smallID();
+            // isBorder[row][col] = this.gameView.isBorder(tile)
+          }
+        }
+
+        const players: unknown[] = [];
+        for (const player of this.gameView.players()) {
+          const nameLoc = player.nameLocation();
+          players.push({
+            id: player.smallID(),
+            x: Math.floor((nameLoc?.x ?? -8) / skip),
+            y: Math.floor((nameLoc?.y ?? -8) / skip),
+            type: { HUMAN: "human", FAKEHUMAN: "nation", BOT: "bot" }[
+              player.type()
+            ],
+            troops: player.troops(),
+            gold: player.gold(),
+            tiles: player.numTilesOwned(),
+            isTraitor: player.isTraitor(),
+          });
+        }
+        console.timeEnd("getState " + data.cid);
+
+        return {
+          game_started: this.hasJoined,
+          is_spawn_phase: this.gameView.inSpawnPhase(),
+          my_id: myID,
+          players: players,
           ownership,
-        },
+        };
       });
+
+      // Accept actions from python bot
+      subscribeToPyBot("act", (data) => {
+        if (!this.hasJoined) {
+          return { success: false, error: "game not started" };
+        }
+
+        if (
+          data.x === undefined ||
+          data.y === undefined ||
+          data.action === undefined
+        ) {
+          return { success: false, error: "missing parameters" };
+        }
+
+        const tile = tileRef[data.y][data.x];
+
+        if (data.action === "spawn") {
+          if (
+            !this.gameView.inSpawnPhase() ||
+            !this.gameView.isLand(tile) ||
+            this.gameView.hasOwner(tile)
+          ) {
+            return { success: false, error: "invalid spawn" };
+          }
+
+          this.eventBus.emit(new SendSpawnIntentEvent(tile));
+          return { success: true };
+        }
+
+        if (this.gameView.inSpawnPhase()) {
+          return { success: false, error: "still in spawn phase" };
+        }
+
+        if (data.action === "attack") {
+          console.log(`bot attacking tile ${tile}`);
+        }
+
+        return { success: false, error: "unknown action" };
+      });
+
+      // Return static initialization data
+      return staticState;
     });
   }
 

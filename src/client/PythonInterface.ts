@@ -4,11 +4,13 @@ import { getPersistentID } from "./Main";
 
 const URL = "wss://localhost:8765";
 const TOKEN = "Pybot"; // subprotocol
-const PING_INTERVAL_MS = 60_000;
+const PING_INTERVAL_MS = 5_000;
 
 let ws: WebSocket | null = null;
 let connectPromise: Promise<WebSocket> | null = null;
-const intentListeners: { [key: string]: (data: any) => void } = {};
+const intentListeners: {
+  [key: string]: (data: any) => object | Promise<object>;
+} = {};
 const missedMessages: any[] = [];
 
 /**
@@ -46,14 +48,25 @@ export function initSocket(): Promise<WebSocket> {
         const data = JSON.parse((e.data as any).toString());
         console.log("Received from Python:", data);
         if (data.intent in intentListeners) {
-          intentListeners[data.intent](data);
+          processCallback(intentListeners[data.intent], data);
         } else {
           console.warn("No listener for intent:", data.intent);
           missedMessages.push(data);
         }
-      } catch {
-        console.error("Invalid message from Python:", e.data);
+      } catch (err) {
+        console.error(
+          "Invalid message from Python:\n",
+          e.data,
+          "\n triggered:\n",
+          err,
+        );
       }
+    });
+
+    socket.addEventListener("close", () => {
+      console.warn("WebSocket closed, will retry on next send");
+      ws = null;
+      connectPromise = null;
     });
   });
 
@@ -73,17 +86,25 @@ export async function sendToPyBot(data: any): Promise<void> {
 
 export async function subscribeToPyBot(
   intent: string,
-  callback: (data: any) => void,
+  callback: (data: any) => object | Promise<object>,
 ): Promise<void> {
   console.log("Subscribing to intent:", intent);
   intentListeners[intent] = callback;
   // Process any missed messages for this intent
   for (let i = missedMessages.length - 1; i >= 0; i--) {
     if (missedMessages[i].intent === intent) {
-      callback(missedMessages[i]);
+      await processCallback(callback, missedMessages[i]);
       missedMessages.splice(i, 1);
     }
   }
+}
+
+async function processCallback(
+  callback: (data: any) => object | Promise<object>,
+  data: any,
+) {
+  const result = await Promise.resolve(callback(data));
+  await sendToPyBot({ cid: data.cid, ...result });
 }
 
 /** Keep-alive ping (only sends if/when connected). */

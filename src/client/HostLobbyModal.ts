@@ -27,7 +27,7 @@ import "./components/Maps";
 import { JoinLobbyEvent } from "./Main";
 import { renderUnitTypeOptions } from "./utilities/RenderUnitTypeOptions";
 
-import { sendToPyBot, subscribeToPyBot } from "./PythonInterface";
+import { subscribeToPyBot } from "./PythonInterface";
 
 @customElement("host-lobby-modal")
 export class HostLobbyModal extends LitElement {
@@ -67,17 +67,19 @@ export class HostLobbyModal extends LitElement {
       this.open();
 
       // Polling isn't clean but minimizes refactor
-      const interval = setInterval(() => {
-        if (this.lobbyId) {
-          sendToPyBot({ cid: data.cid, lobbyId: this.lobbyId });
-          clearInterval(interval);
-        }
-      }, 50); // slight delay to ensure lobbyId is set
+      return new Promise((resolve) => {
+        const interval = setInterval(() => {
+          if (this.lobbyId) {
+            clearInterval(interval);
+            resolve({ cid: data.cid, lobbyId: this.lobbyId });
+          }
+        }, 50);
+      });
     });
 
     subscribeToPyBot("startGame", (data) => {
       this.startGame();
-      sendToPyBot({ cid: data.cid });
+      return { cid: data.cid };
     });
   }
 

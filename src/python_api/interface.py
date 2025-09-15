@@ -11,7 +11,7 @@ from playwright.async_api import async_playwright
 
 CLIENT_URL = "http://localhost:9000"
 TOKEN = "Pybot"
-TIMEOUT = 6000
+TIMEOUT = 10
 
 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_ctx.load_cert_chain("localhost.pem", "localhost-key.pem")
@@ -19,21 +19,20 @@ print("WARNING: using self-signed certificate, for development only")
 
 NULL_PLAYER_ID = 0
 
-class Map(TypedDict):
-    width: int
-    height: int
-    skip: int # distance between sampled tiles
-    traversability: List[List[int]]  # 2D array
-    is_land: List[List[bool]]  # 2D array
-    ownership: List[List[int]]  # 2D array
 
 class Player(TypedDict):
     id: int
+    x: int
+    y: int
+    type: Literal["human", "nation", "bot"]
     troops: int
     gold: int
-    type: Literal["human", "bot", "nation"]
-    # relationship: Literal["team", "ally", "they_propose", "we_propose", "enemy"] TODO
-    # alliance_timer: float TODO
+    tiles: int
+    is_traitor: bool
+
+    # TODO Diplomacy
+    # relationship: Literal["team", "ally", "they_propose", "we_propose", "enemy"]
+    # alliance_timer: float
 
     # TODO Structures
     # cities: int
@@ -50,44 +49,53 @@ class State(TypedDict):
     turn: int
     my_id: str
 
-    map: Map
     players: List[Player]
+
+    # Map info
+    width: int
+    height: int
+    skip: int  # distance between sampled tiles
+    traversal_cost: NDArray[np.int_]  # 2D array
+    is_land: NDArray[np.bool_]  # 2D array
+    ownership: NDArray[np.int_]  # 2D array
 
     # TODO: Entities info
 
-class Spawn(TypedDict):
+class BaseAction(TypedDict):
+    action: str
+    x: int
+    y: int
+
+class Spawn(BaseAction):
     action: Literal["spawn"]
-    location: tuple[int, int]
 
-class Attack(TypedDict):
+class Attack(BaseAction):
     action: Literal["attack"]
-    location: tuple[int, int]
     ratio: float
 
-class BoatAttack(TypedDict):
+class BoatAttack(BaseAction):
     action: Literal["boat_attack"]
-    location: tuple[int, int]
     ratio: float
 
-class Build(TypedDict):
+class Build(BaseAction):
     action: Literal["build"]
     structure: Literal["city", "port", "factory", "defence_post", "missile_silo", "sam_launcher"]
-    location: tuple[int, int]
 
-class Place(TypedDict):
+class Place(BaseAction):
     action: Literal["place"]
     structure: Literal["warship", "atomic_bomb", "hydrogen_bomb", "mirv"]
-    location: tuple[int, int]
 
 Action = Spawn | Attack | BoatAttack | Build | Place
 
 class ClientSessionAsync:
-    def __init__(self, orchestrator, ws, client_id):
+    def __init__(self, orchestrator, ws, client_id, skip=2):
         self._o = orchestrator
         self._ws = ws
         self._id = client_id
         self._connection_promise = None
         self._pending: dict[str, asyncio.Future[Any]] = {}
+        self.initial_state = None
+        self.skip = skip
 
     async def _listen(self):
         try:
@@ -116,12 +124,23 @@ class ClientSessionAsync:
         if self._connection_promise:
             await self._connection_promise
 
-        # Expect a response with the same cid
-        fut = asyncio.get_event_loop().create_future()
-        cid = str(id(fut))
-        self._pending[cid] = fut
-        await self._ws.send(json.dumps({**data, "cid": cid}))
-        return await asyncio.wait_for(fut, timeout=TIMEOUT)
+        try:
+            # Expect a response with the same cid
+            fut = asyncio.get_event_loop().create_future()
+            cid = str(id(fut))
+            self._pending[cid] = fut
+            await self._ws.send(json.dumps({**data, "cid": cid}))
+            response = await asyncio.wait_for(fut, timeout=TIMEOUT)
+            del response["cid"]
+            return response
+        except (asyncio.TimeoutError, websockets.ConnectionClosed) as e:
+            print("Error sending to", self._id, ":", e)
+            print("Closing connection to", self._id)
+            await self._ws.close(code=1002, reason="timeout")
+
+            self._connection_promise = asyncio.get_event_loop().create_future()
+            await self._connection_promise
+            return await self._send(data)  # retry
 
     async def createLobby(self):
         print("Creating lobby")
@@ -135,14 +154,23 @@ class ClientSessionAsync:
     async def startGame(self):
         await self._send({"intent": "startGame"})
 
+    async def _saveStaticState(self):
+        self.initial_state = await self._send({"intent": "getStaticState", "skip": self.skip})
+
     async def getState(self) -> State:
-        return await self._send({"intent": "getState"})
+        if self.initial_state is None:
+            await self._saveStaticState()
+
+        response = await self._send({"intent": "getState"})
+        return {**self.initial_state, **response}
 
     async def act(self, action: Action):
+        if self.initial_state is None:
+            await self._saveStaticState()
+
         print("Acting:", action)
-        pass
-        # response = await self._send({"intent": "act", **action})
-        # return response["success"]
+        response = await self._send({"intent": "act", **action})
+        return response["success"]
 
 
 class SessionManagerAsync:
@@ -153,6 +181,7 @@ class SessionManagerAsync:
     async def serve(self, host="localhost", port=8765):
         return await websockets.serve(
             self._handler, host, port,
+            max_size=None,
             origins=[CLIENT_URL], subprotocols=[TOKEN], ssl=ssl_ctx
         )
 
@@ -195,16 +224,18 @@ class SessionManagerAsync:
 
 
 class SynchronousAPI:
-    def __init__(self):
+    def __init__(self, turn_length=1):
+        self._min_turn_time = turn_length
         self._on_state_callbacks = []
         self._client_modes = []
         self._playwright = None
 
-    def register_agent(self, on_state: Callable[[State], Collection[Action]], headless=True):
+    def register_agent(self, on_state: Callable[[State], Collection[Action]], mode: Literal["headless", "window", "debug"] = "headless"):
+        assert mode in ("headless", "window", "debug"), "mode must be 'headless', 'window' or 'debug'"
         self._on_state_callbacks.append(on_state)
-        self._client_modes.append(headless)
+        self._client_modes.append(mode)
 
-    async def _game_loop(self, turn_length=1, wait_for_humans=False):
+    async def _game_loop(self):
         # Todo parallelize every client loop
         session = SessionManagerAsync()
         server = await session.serve()
@@ -212,18 +243,17 @@ class SynchronousAPI:
         assert len(self._on_state_callbacks) >= 2, "At least two agents must be registered"
 
         clients = []
-        for headless in self._client_modes:
-            await self.start_browser(headless=headless)
+        for mode in self._client_modes:
+            if mode == "debug":
+                print("Connect your client in the browser at", CLIENT_URL)
+            else:
+                await self.start_browser(headless=(mode == "headless"))
             clients.append(await asyncio.create_task(session.expect_client()))
 
         lobby_id = await clients[0].createLobby()
         print("Created lobby:", lobby_id)
         for client in clients[1:]:
             await client.joinLobby(lobby_id)
-
-        if wait_for_humans:
-            print("Join the lobby at: {CLIENT_URL}/#join={lobby_id}")
-            input("When you're ready, press Enter to start the game")
 
         await clients[0].startGame()
         print("Game started")
@@ -240,7 +270,7 @@ class SynchronousAPI:
                 outcome = [await client.act(action) for action in actions]
 
             end_time = asyncio.get_event_loop().time()
-            await asyncio.sleep(max(.0, turn_length - (end_time - start_time)))
+            await asyncio.sleep(max(.0, self._min_turn_time - (end_time - start_time)))
 
     async def start_browser(self, headless=True):
         if self._playwright is None:
@@ -251,5 +281,5 @@ class SynchronousAPI:
 
         await page.goto(CLIENT_URL)
 
-    def play(self, turn_length=1, wait_for_humans=False):
-        asyncio.run(self._game_loop(turn_length, wait_for_humans))
+    def play(self):
+        asyncio.run(self._game_loop())
