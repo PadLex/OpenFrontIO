@@ -1,39 +1,56 @@
 import pygame
 import numpy as np
 
-W, H   = 64, 64          # logical grid (matrix) size
-SCALE  = 10              # on-screen pixel size
-FPS    = 60
+from interface import State, NULL_PLAYER_ID
 
-pygame.init()
-screen  = pygame.display.set_mode((W*SCALE, H*SCALE))
-clock   = pygame.time.Clock()
 
-# Example: grayscale matrix -> RGB pixels
-# Keep a single array and mutate it each frame
-buf = np.zeros((H, W, 3), dtype=np.uint8)
+class MapVisualizer:
 
-running = True
-t = 0.0
-while running:
-    for e in pygame.event.get():
-        if e.type == pygame.QUIT:
-            running = False
+    def __init__(self, state: State):
+        self.width = state["width"]
+        self.height = state["height"]
+        self.scale = state["skip"]
 
-    # --- update your matrix here (demo animation) ---
-    y, x = np.mgrid[0:H, 0:W]
-    val = (np.sin(0.15*x + t) + np.cos(0.12*y - t)) * 0.5 + 0.5  # 0..1
-    buf[..., 0] = (val * 255).astype(np.uint8)      # R
-    buf[..., 1] = (1 - val * 0.8 * (x % 2)).astype(np.uint8)     # G
-    buf[..., 2] = (val * 255).astype(np.uint8)      # B
-    t += 0.08
-    # -----------------------------------------------
+        pygame.init()
+        self.screen  = pygame.display.set_mode((self.width * self.scale, self.height * self.scale))
+        pygame.display.set_caption("Map Visualizer")
+        self.clock   = pygame.time.Clock()
+        self.running = True
 
-    # Create/update a surface from the array (no per-rect drawing)
-    surf = pygame.surfarray.make_surface(buf.swapaxes(0,1))  # (W,H,3)
-    surf = pygame.transform.scale(surf, (W*SCALE, H*SCALE))  # nearest-neighbor
-    screen.blit(surf, (0, 0))
-    pygame.display.flip()
-    clock.tick(FPS)
+        players = state["players"]
+        my_id = state["my_id"]
+        self.colors = np.random.randint(0, 128, size=(5000, 3), dtype=np.uint8)
+        self.colors[NULL_PLAYER_ID] = [0, 255, 0]  # Empty
+        self.colors[my_id] = [255, 0, 0] # Me
 
-pygame.quit()
+        self.water_mask = ~np.array(state["is_land"], dtype=bool)
+
+
+    def render(self, state: State):
+        ownership = state["ownership"]
+
+        if not self.running:
+            return
+
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                pygame.quit()
+                self.running = False
+                return
+
+        # Example: grayscale matrix -> RGB pixels
+        # Keep a single array and mutate it each frame
+        buf = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        color = self.colors[ownership]
+        buf[:, :, :] = color[:, :, :]
+
+        buf[self.water_mask] = [0, 0, 255]
+
+        y, x = np.mgrid[0:self.height, 0:self.width]
+
+        surf = pygame.surfarray.make_surface(buf.swapaxes(0,1))  # (W,H,3)
+        surf = pygame.transform.scale(surf, (self.width * self.scale, self.height * self.scale))
+        self.screen.blit(surf, (0, 0))
+        pygame.display.flip()
+
+

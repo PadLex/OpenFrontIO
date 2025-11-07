@@ -162,10 +162,13 @@ export abstract class DefaultServerConfig implements ServerConfig {
   abstract numWorkers(): number;
   abstract env(): GameEnv;
   turnIntervalMs(): number {
-    return 100;
+    // return 100;
+    // return 10;
+    return 0;
   }
   gameCreationRate(): number {
     return 60 * 1000;
+    // return 100000;
   }
 
   lobbyMaxPlayers(

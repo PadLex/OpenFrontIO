@@ -3,9 +3,13 @@ import numpy as np
 import random
 
 from interface import SynchronousAPI, State, Action, NULL_PLAYER_ID
+from debug import MapVisualizer
 
 def neighbor_ids_by_edges(A, my_id, eight=False):
     outs = []
+
+    print("\n\n", my_id)
+    print(A)
 
     # vertical neighbors
     up, down = A[:-1, :], A[1:, :]
@@ -31,20 +35,32 @@ def neighbor_ids_by_edges(A, my_id, eight=False):
     return np.unique(np.concatenate(outs)) if outs else np.array([], dtype=A.dtype)
 
 
+
 if __name__ == "__main__":
     api = SynchronousAPI()
 
+    visualizer: MapVisualizer | None = None
+
     def random_bot(state: State) -> List[Action]:
+        global visualizer
+        if visualizer is None:
+            visualizer = MapVisualizer(state)
+
+
         actions: List[Action] = []
 
         if not state["game_started"]:
             return actions
 
-        my_id = state["my_id"]
+        my_id = np.array(state["my_id"])
         is_land = state["is_land"]
-        ownership = state["ownership"]
+        ownership = np.array(state["ownership"])
         width = state["width"]
         height = state["height"]
+        players = state["players"]
+
+        if my_id == 1:
+            visualizer.render(state)
 
         # Place on a random land tile during spawn phase
         if state["is_spawn_phase"]:
@@ -55,12 +71,16 @@ if __name__ == "__main__":
                 if is_land[y][x] and ownership[y][x] == NULL_PLAYER_ID:
                     return [{"action": "spawn", "x": x, "y": y}]
 
+        # print(neighbor_ids_by_edges(ownership, my_id, eight=True))
+
         return []
 
 
     # api.register_agent(random_bot, "debug")
-    api.register_agent(random_bot, "window")
-    # api.register_agent(random_bot, "headless")
+    # api.register_agent(random_bot, "window")
+    # api.register_agent(random_bot, "window")
+
+    api.register_agent(random_bot, "headless")
     api.register_agent(random_bot, "headless")
 
 

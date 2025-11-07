@@ -11,7 +11,7 @@ from playwright.async_api import async_playwright
 
 CLIENT_URL = "http://localhost:9000"
 TOKEN = "Pybot"
-TIMEOUT = 10
+TIMEOUT = 3
 
 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_ctx.load_cert_chain("localhost.pem", "localhost-key.pem")
@@ -88,7 +88,7 @@ class Place(BaseAction):
 Action = Spawn | Attack | BoatAttack | Build | Place
 
 class ClientSessionAsync:
-    def __init__(self, orchestrator, ws, client_id, skip=2):
+    def __init__(self, orchestrator, ws, client_id, skip=4):
         self._o = orchestrator
         self._ws = ws
         self._id = client_id
@@ -224,7 +224,7 @@ class SessionManagerAsync:
 
 
 class SynchronousAPI:
-    def __init__(self, turn_length=1):
+    def __init__(self, turn_length=0.1):
         self._min_turn_time = turn_length
         self._on_state_callbacks = []
         self._client_modes = []
